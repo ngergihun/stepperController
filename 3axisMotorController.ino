@@ -307,9 +307,7 @@ void setup()
   Y_driver.moveUsingStepDirInterface();
   Z_driver.moveUsingStepDirInterface();
 
-  
-//--------------------------------------------------------------------------------------------------------
-//--------------------------------------------------------------------------------------------------------
+
   //---DEMO. This entire part can be removed, it just wiggles the 3 axes to indicate that the device is turned on
   //Drive the drivers directly via UART - It wiggles all three axes a bit just to see that they work
   X_driver.moveAtVelocity(-2000); //Drive in the negative direction
@@ -327,8 +325,6 @@ void setup()
   Y_driver.moveAtVelocity(0);
   Z_driver.moveAtVelocity(0);
   //---ENDOFDEMO
-//--------------------------------------------------------------------------------------------------------
-//--------------------------------------------------------------------------------------------------------
 
 
 }
@@ -637,6 +633,24 @@ void InitialValues()
   }
 }
 
+void goRelative(long Steps, int motorNumber) //Moves the stage by xSteps STEP along the X axis relative to the current position
+{
+    long targetSteps = 0;
+    //Get the current position of the X motor in STEPS
+    long start_position = stepper_controller.getActualPosition(motorNumber);
+
+    //Add relative movement steps to the current position to get the new target location
+    targetSteps = start_position + Steps;
+
+    //send the command to the TMC429
+    stepper_controller.setTargetPosition(motorNumber, targetSteps); //Move X (0) to the recently determined target
+
+    if (debugMode == True){
+        Serial.print("Start position: "); Serial.println(start_position);
+        Serial.print("Moving by: "); Serial.println(Steps);
+    }
+}
+
 void goToX(float xPosition) //Brings the stage to a predetermined x position in mm
 {
     long xtargetSteps = 0; //Target position in steps units
@@ -675,6 +689,7 @@ void goToZ(float zPosition) //Brings the stage to a predetermined z position in 
     stepper_controller.setTargetPosition(2, ztargetSteps); //Move z (2) to the recently determined target
 }
 
+// DO WE NEED THIS? - do it from Python
 void goToXY(float xPosition, float yPosition) //Brings the stage to a predetermined x and y simultaneously position in mm
 {
     goToX(xPosition);
@@ -788,6 +803,26 @@ void serialCommandReceiver() //This function polls the serial port and received 
                 Serial.print(tempXp);
                 Serial.print(", Y: ");
                 Serial.println(tempYp);
+            }
+                break;
+
+            case 'r': //go to relative position
+            {
+                float tempSteps; //number of steps
+                float tempMotor; //motor number
+                String twoFloats = Serial.readStringUntil('\n');; //String that contains the 2 floatin point numbers
+
+                tempSteps = twoFloats.substring(0, twoFloats.indexOf(',')).toFloat(); //Parse the X value
+                tempMotor = twoFloats.substring(twoFloats.indexOf(',') + 1).toFloat(); //Parse the Y value
+                
+                int steps_num = round(tempSteps);
+                int motor_num = round(tempMotor);
+
+                goRelative(steps_num, motor_num); //Pass the command to the controller 
+                Serial.print("Parsed steps: ");
+                Serial.print(steps_num);
+                Serial.print(", Motor: ");
+                Serial.println(motor_num);
             }
                 break;
 
