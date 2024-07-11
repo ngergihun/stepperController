@@ -645,7 +645,7 @@ void goRelative(long Steps, int motorNumber) //Moves the stage by xSteps STEP al
     //send the command to the TMC429
     stepper_controller.setTargetPosition(motorNumber, targetSteps); //Move X (0) to the recently determined target
 
-    if (debugMode == True){
+    if (debugMode == true){
         Serial.print("Start position: "); Serial.println(start_position);
         Serial.print("Moving by: "); Serial.println(Steps);
     }
