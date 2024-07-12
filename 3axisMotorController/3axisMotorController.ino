@@ -23,6 +23,7 @@ The device won't listen to the other two modes
 #include <TMC2209.h> //TMC2209 library - Stepper motor config
 #include <TMC429.h> //TMC429 library - Ramp generator
 #include <Wire.h> //i2C Library
+#include <CommandParser.h> //CommandParser Library for parsing incoming UART command
 
 
 //Instantiate the drivers for the 3 axes
@@ -51,6 +52,10 @@ HardwareSerial & serial_stream = Serial1; //1st UART port
 //Unlike Arduino, Teensy has different Serial (USB) and Serial1 (UART)
 //Serial1 is a hardware serial (UART) port
 
+// Instantiate COMMAND PARSER object
+typedef CommandParser<> MyCommandParser;
+MyCommandParser parser;
+
 const long SERIAL_BAUD_RATE = 115200; //Baud rate of the UART
 //----
 const int RX_PIN = 0; //Physical pins of the serial port
@@ -71,6 +76,8 @@ const long VELOCITY_MIN = 50; //Velocity cannot be 0, see datasheet. Below 50 st
 float xthreadPitch = 2.0; //Pitch of the thread in [mm]. 1 turn of the screw results in '_threadPitch' amount of linear displacement
 float ythreadPitch = 2.0;
 float zthreadPitch = 2.0;
+
+float threadPitches[3] = {xthreadPitch, ythreadPitch, ythreadPitch};
 
 //Pins
 const byte Analog_X_pin = A2; //x-axis readings - A2: 16
@@ -132,6 +139,11 @@ void setup()
   //SERIAL - USB
   Serial.begin(9600);
   Serial.println("TMC249 - TMC2209 - 3-axis motor driver board");
+
+  parser.registerCommand("mr", "ud", &cmd_go_relative); // Relative move in STEPs
+  parser.registerCommand("ma", "ud", &cmd_go_absolute); // Relative move in STEPs
+  parser.registerCommand("gp", "u", &cmd_get_position); // Get Position
+  parser.registerCommand("es", "u", &cmd_enable_switches); // Get Position
 
   //SERIAL - TMC2209
   Serial1.begin(SERIAL_BAUD_RATE);
@@ -229,7 +241,6 @@ void setup()
 
       //stepper_controller.enableSwitchSoftStop(0); //X (0) Motor stops softly when hitting the switch - Pick one
       stepper_controller.disableSwitchSoftStop(0); //X (0) Motor stops hard when hitting the switch
-
       stepper_controller.setReferenceSwitchToLeft(0); //Homing switch is at the left (negative, motor) side  
   }
   
@@ -242,6 +253,7 @@ void setup()
   stepper_controller.setTargetPosition(0, ZERO_POSITION);
   stepper_controller.setSoftMode(0); // Ramp with soft stop - X
   delay(500);
+
   //----------------------------------------------------------------------------
   Y_driver.setRunCurrent(RUN_CURRENT_PERCENT);
   Y_driver.enableAutomaticCurrentScaling();
@@ -331,7 +343,8 @@ void setup()
 
 void loop()
 {
-  serialCommandReceiver(); //Polls the serial port for incoming instructions/commands
+  // serialCommandReceiver(); //Polls the serial port for incoming instructions/commands
+  serialListener();
   ReadAnalog(); //Read the joystick
   checkButtons(); //Poll the buttons
   driveMotorWithButtons(); //Send commands to the motor when it is actual
@@ -633,68 +646,76 @@ void InitialValues()
   }
 }
 
-void goRelative(long Steps, int motorNumber) //Moves the stage by xSteps STEP along the X axis relative to the current position
+void returnPosition(int motorNumber)
 {
-    long targetSteps = 0;
-    //Get the current position of the X motor in STEPS
-    long start_position = stepper_controller.getActualPosition(motorNumber);
+  int32_t current_position = stepper_controller.getActualPosition(motorNumber);
+  Serial.print("PO"); Serial.print(motorNumber); Serial.println(current_position);
+}
 
-    //Add relative movement steps to the current position to get the new target location
-    targetSteps = start_position + Steps;
+// STEP UNIT MOVEMENTS ------------------------------------------------------------------------------------------------------------------------------------------------
+// RELATIVE -------------------------------------------------------------------------
+void goRelative(int motorNumber, long Steps) //Moves the stage by xSteps STEP along the X axis relative to the current position
+{
+  long targetSteps = 0;
+  //Get the current position of the X motor in STEPS
+  long start_position = stepper_controller.getActualPosition(motorNumber);
 
+  //Add relative movement steps to the current position to get the new target location
+  targetSteps = start_position + Steps;
+
+  //send the command to the TMC429
+  stepper_controller.setTargetPosition(motorNumber, targetSteps); //Move X (0) to the recently determined target
+
+  // TODO: should we wait until it moves?
+  // Serial.print("PO"); Serial.print(motorNumber); Serial.println(current_position);
+  // long current_position = stepper_controller.getActualPosition(motorNumber);
+}
+// ABSOLUTE -------------------------------------------------------------------------
+void goAbsolute(int motorNumber, long Steps) //Moves the stage by xSteps STEP along the X axis relative to the current position
+{
+  //send the command to the TMC429
+  stepper_controller.setTargetPosition(motorNumber, Steps); //Move X (0) to the recently determined target
+
+  // TODO: should we wait until it moves?
+  // Serial.print("PO"); Serial.print(motorNumber); Serial.println(current_position);
+  // long current_position = stepper_controller.getActualPosition(motorNumber);
+}
+
+// REAL COORDINATE MOVEMENTS
+// RELATIVE -------------------------------------------------------------------------
+void goToRelativeReal(int motorNumber, float Position)
+{
+  long targetSteps = 0;
+  // Start position
+  long start_position = stepper_controller.getActualPosition(motorNumber);
+  //Calculates target move in steps
+  long Steps = (long)((Position / threadPitches[motorNumber]) * (MICROSTEPS_PER_REV));
+  //Add relative movement steps to the current position to get the new target location
+  targetSteps = start_position + Steps;
+  //send the command to the TMC429
+  stepper_controller.setTargetPosition(motorNumber, targetSteps); //Move X (0) to the recently determined target
+
+}
+// ABSOLUTE -------------------------------------------------------------------------
+void goToAbsoluteReal(int motorNumber, float Position) //Brings the stage to a predetermined x position in mm
+{
+    //Target position in steps units
+    long targetSteps = 0; 
+
+    //convert xPosition (mm) to steps
+    targetSteps = (long)((Position / threadPitches[motorNumber]) * (MICROSTEPS_PER_REV)); //Example where target is 5 mm: ( 5 / 2 ) * (256 * 200) = 2.5 * 51200 steps. OK!
     //send the command to the TMC429
     stepper_controller.setTargetPosition(motorNumber, targetSteps); //Move X (0) to the recently determined target
-
-    if (debugMode == true){
-        Serial.print("Start position: "); Serial.println(start_position);
-        Serial.print("Moving by: "); Serial.println(Steps);
-    }
+    // TODO: should we wait until it moves?
+    // Serial.print("PO"); Serial.print(motorNumber); Serial.println(current_position);
 }
 
-void goToX(float xPosition) //Brings the stage to a predetermined x position in mm
+// DO WE NEED THIS? - do it from Python ???? if we implement the waitings in the single axis movements then it is useful
+void goToXYReal(int motorNumber1, int motorNumber2, float Position1, float Position2) //Brings the stage to a predetermined x and y simultaneously position in mm
 {
-    long xtargetSteps = 0; //Target position in steps units
-
-    //convert xPosition (mm) to steps
-
-    xtargetSteps = (long)((xPosition / xthreadPitch) * (MICROSTEPS_PER_REV));
-    //Example where target is 5 mm: ( 5 / 2 ) * (256 * 200) = 2.5 * 51200 steps. OK!
-
-    //send the command to the TMC429
-    stepper_controller.setTargetPosition(0, xtargetSteps); //Move X (0) to the recently determined target
-}
-
-void goToY(float yPosition) //Brings the stage to a predetermined y position in mm
-{
-    long ytargetSteps = 0; //Target position in steps units
-
-    //convert yPosition (mm) to steps
-
-    ytargetSteps = (long)((yPosition / ythreadPitch) * (MICROSTEPS_PER_REV));
-    //Example where target is 5 mm: ( 5 / 2 ) * (256 * 200) = 2.5 * 51200 steps. OK!
-
-    //send the command to the TMC429
-    stepper_controller.setTargetPosition(1, ytargetSteps); //Move Y (1) to the recently determined target
-}
-
-void goToZ(float zPosition) //Brings the stage to a predetermined z position in mm
-{
-    long ztargetSteps = 0; //Target position in steps units
-    //convert xPosition (mm) to steps
-
-    ztargetSteps = (zPosition / zthreadPitch) * (MICROSTEPS_PER_REV);
-    //Example where target is 5 mm: ( 5 / 2 ) * (256 * 200) = 2.5 * 51200 steps. OK!
-    // 
-    //send the command to the TMC429
-    stepper_controller.setTargetPosition(2, ztargetSteps); //Move z (2) to the recently determined target
-}
-
-// DO WE NEED THIS? - do it from Python
-void goToXY(float xPosition, float yPosition) //Brings the stage to a predetermined x and y simultaneously position in mm
-{
-    goToX(xPosition);
+    goToAbsoluteReal(motorNumber1, Position1);
     delayMicroseconds(10); //a brief delay, but probably, it is unnecessary
-    goToY(yPosition);
+    goToAbsoluteReal(motorNumber2, Position2);
     //Simple coding - According to Section 9.4, if the commands arrive fast enough, the motors will move simultaneously
     //It works properly
 
@@ -704,168 +725,7 @@ void goToXY(float xPosition, float yPosition) //Brings the stage to a predetermi
     //2; Use this time to recalculate the ramping of the other motor so its speed and acceleration will be adjusted to the other motor
     //3; Apply the speed and acceleration values, then send the target positions to both drivers as shown above.
 }
-
-void serialCommandReceiver() //This function polls the serial port and received the commands sent from the computer
-{
-    if (UARTMode == true)
-    {
-        if (Serial.available() > 0)
-        {
-            char commandCharacter = Serial.read(); //we use characters (letters) for controlling the switch-case
-
-            switch (commandCharacter) //based on the command character, we decide what to do
-            {
-
-            case 'a': //Acceleration (steps/s^2) - Not necessarily needed when RAMP mode is used 
-            {
-                receivedAcceleration = Serial.parseInt(); //Parse the value
-                Serial.print("New acceleration: ");
-                Serial.println(receivedAcceleration);
-                //Usage: a2000 -> acceleration = 2000 steps/s^2
-                
-                //First we read the current speed settings because we don't want to override those
-                long tempV_x = stepper_controller.getVelocityMaxInHz(0);
-                long tempV_y = stepper_controller.getVelocityMaxInHz(1);
-                long tempV_z = stepper_controller.getVelocityMaxInHz(2);
-
-                //Apply new acceleration to all motors
-                stepper_controller.setLimitsInHz(0, 0, tempV_x, receivedAcceleration);
-                stepper_controller.setLimitsInHz(1, 0, tempV_y, receivedAcceleration);
-                stepper_controller.setLimitsInHz(2, 0, tempV_z, receivedAcceleration);
-            }
-                break;
-
-            case 'v': //Velocity (steps/s)
-            {
-                receivedVelocity = Serial.parseInt(); //Parse the value
-                Serial.print("New Velocity: ");
-                Serial.println(receivedVelocity);
-                //Usage: v200 -> velocity = 200 steps/s
-                
-                //First we read the current speed settings because we don't want to override those
-                long tempA_x = stepper_controller.getAccelerationMaxInHzPerS(0);
-                long tempA_y = stepper_controller.getAccelerationMaxInHzPerS(1);
-                long tempA_z = stepper_controller.getAccelerationMaxInHzPerS(2);
-
-                //Apply to all motors
-                stepper_controller.setLimitsInHz(0, 0, receivedVelocity, tempA_x);
-                stepper_controller.setLimitsInHz(1, 0, receivedVelocity, tempA_y);
-                stepper_controller.setLimitsInHz(2, 0, receivedVelocity, tempA_z);
-            }
-                break;
-
-            //Notice! These are ABSOLUTE positions ("move to")
-            case 'x': //go to X
-            {
-                float tempX; //temporary X value
-                tempX = Serial.parseFloat(); //Parse the value
-                Serial.print("X target: ");
-                Serial.println(tempX);
-                goToX(tempX); //Pass the command to the controller
-                //Usage: x4.2 -> goes to 4.2 mm position along the X axis
-            }
-                break;
-
-            case 'y': //go to Y
-            {
-                float tempY; //temporary Y value
-                tempY = Serial.parseFloat(); //Parse the value
-                Serial.print("Y target: ");
-                Serial.println(tempY);
-                goToY(tempY); //Pass the command to the controller
-                //Usage: x2.7 -> goes to 2.7 mm position along the Y axis
-            }
-                break;
-
-            case 'z': //go to Z
-            {
-                float tempZ; //temporary Z value
-                tempZ = Serial.parseFloat(); //Parse the value
-                Serial.print("Z target: ");
-                Serial.println(tempZ);
-                goToZ(tempZ); //Pass the command to the controller
-                //Usage: x0.9 -> goes to 0.9 mm position along the Z axis
-            }
-                break;
-
-            case 'p': //go to position (X-Y simultaneously)
-            {
-                float tempXp; //temporary X value
-                float tempYp; //temporary Y value
-                String twoFloats = Serial.readStringUntil('\n');; //String that contains the 2 floatin point numbers
-
-                tempXp = twoFloats.substring(0, twoFloats.indexOf(',')).toFloat();; //Parse the X value
-                tempYp = twoFloats.substring(twoFloats.indexOf(',') + 1).toFloat(); //Parse the Y value
-
-                goToXY(tempXp, tempYp); //Pass the command to the controller 
-                //Usage: p3.24,4.56 -> x goes to 3.24 mm, y goes to 4.56 mm   
-                Serial.print("Parsed targets X: ");
-                Serial.print(tempXp);
-                Serial.print(", Y: ");
-                Serial.println(tempYp);
-            }
-                break;
-
-            case 'r': //go to relative position
-            {
-                float tempSteps; //number of steps
-                float tempMotor; //motor number
-                String twoFloats = Serial.readStringUntil('\n');; //String that contains the 2 floatin point numbers
-
-                tempSteps = twoFloats.substring(0, twoFloats.indexOf(',')).toFloat(); //Parse the X value
-                tempMotor = twoFloats.substring(twoFloats.indexOf(',') + 1).toFloat(); //Parse the Y value
-                
-                int steps_num = round(tempSteps);
-                int motor_num = round(tempMotor);
-
-                goRelative(steps_num, motor_num); //Pass the command to the controller 
-                Serial.print("Parsed steps: ");
-                Serial.print(steps_num);
-                Serial.print(", Motor: ");
-                Serial.println(motor_num);
-            }
-                break;
-
-            case 'h': //Home a selected motor
-            {
-                int selectedMotor = 0; //0: x, 1: y, 2: z
-                selectedMotor = Serial.parseInt(); //Example: "h0" selects motor 0.
-                motorHoming(selectedMotor);
-                //Usage: h0 -> homes the X-axis
-                Serial.println("Homing initiated on axis: ");
-                Serial.print(selectedMotor);
-            }
-                break;
-
-            case 'T': //Test - Checks the connection between the MCU and the TMC429 module. Just some random register reading.    
-            {
-                Serial.print("TMC429 actual pos-X: ");
-                long xsteppos = stepper_controller.getActualPosition(0);
-                Serial.println(xsteppos);
-                Serial.println(calculatePositionMM(xsteppos));
-                //----
-                Serial.print("TMC429 actual pos-Y: ");
-                long ysteppos = stepper_controller.getActualPosition(1);
-                Serial.println(ysteppos);
-                Serial.println(calculatePositionMM(ysteppos));
-            }
-            case 'R': //Reset - Code jumps back to setup() and reinitializes everything. Use it with caution!
-            {
-                Serial.println("RESET WAS INITIATED");
-                setup(); //Go back to the setup() function and reinitialize everything.
-            }
-            break;
-
-            }
-        }
-    }
-    else
-    {
-        Serial.read(); //Read and discard the incoming data
-        //This is useful because if the user accidentally sends something via UART while in joystick or button mode
-        //It won't get performed once the user switches to UART mode
-    }
-}
+// --------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 void sendNewSettings()
 {
@@ -1048,6 +908,32 @@ void motorHoming(int motorNumber) //Motor numbers: x = 0, y = 1, z = 2.
         stepper_controller.setLimitsInHz(motorNumber, VELOCITY_MIN, VELOCITY_MAX, ACCELERATION_MAX);    
 }
 
+void enableSwitchMonitoring(bool state)
+{
+  for (motorNumber = 0; motorNumber < 3; motorNumber++)
+  {
+    enableSwitchesPerMotor(motorNumber, true);
+  }
+  delay(100);
+  limitSwitchesEnabled = state;
+  Serial.print("SE"); Serial.println(limitSwitchesEnabled);
+}
+
+void enableSwitchesPerMotor(int motorNumber, bool state){
+  if (state == true){
+    stepper_controller.enableLeftSwitchStop(motorNumber); //Motor stops when the speed is negative and REF1 is active
+    stepper_controller.enableRightSwitchStop(motorNumber); // Motor stops when the speed is positive and REFR1 is active
+    stepper_controller.setReferenceSwitchToLeft(motorNumber); //Homing switch is at the left (negative, motor) side 
+    //stepper_controller.enableSwitchSoftStop(motorNumber); // Motor stops softly when hitting the switch - Pick one
+    stepper_controller.disableSwitchSoftStop(motorNumber); // Motor stops hard when hitting the switch
+  }
+  else if (state == false){
+    stepper_controller.disableLeftSwitchStop(motorNumber); //Motor stops when the speed is negative and REF1 is active
+    stepper_controller.disableRightSwitchStop(motorNumber); // Motor stops when the speed is positive and REFR1 is active
+    stepper_controller.setReferenceSwitchToLeft(motorNumber); //Homing switch is at the left (negative, motor) side 
+  }
+}
+
 void monitorLimitSwitches()
 {
     if (limitSwitchesEnabled == true)//Only monitor limit switches if the user enabled it!
@@ -1070,20 +956,17 @@ void monitorLimitSwitches()
             {
                 //If any of the switches were activated, we stop 
                 //Assumption: no simultaneous motor motion!
-
                 limitSwitchWasHit = true; //Set the status to true
                 limitSwitchActive = true;
                 Serial.println("Right limit switch " + String(motorNumber) + " was activated");
 
                 updateStatusLED();//Indicate status with red LED
 
-
                 long tempposition = stepper_controller.getActualPosition(motorNumber);
                 //Motor is stopped by the controller here as long as the switch is pressed
                 stepper_controller.setTargetPosition(motorNumber, tempposition);
 
                 //Check if this will interfere with homing!!!
-
                 //Switch to velocity mode, so the motor can be controlled by speed
                 stepper_controller.setVelocityMode(motorNumber); //Select the motor that triggered the switch
                 stepper_controller.setTargetVelocity(motorNumber, -500); //Send it backwards with an arbitrary speed
@@ -1103,7 +986,6 @@ void monitorLimitSwitches()
 
                 break; //Exit the for loop so the loop can inspect the other switches as well
             }
-
 
             if (L_limitSwitchStatus == true)
             {
@@ -1315,4 +1197,48 @@ void driveMotorWithButtons()
             //no else branch, because one of the three conditions is always true
         }
     }
+}
+
+void cmd_go_relative(MyCommandParser::Argument *args, char *response){
+  // Callback for relative movement request ""
+  long motornumber = (long)args[0].asInt64;
+  int numsteps = (int)args[1].asDouble;
+
+  goRelative(motornumber, numsteps);
+
+}
+
+void cmd_go_absolute(MyCommandParser::Argument *args, char *response){
+  // Callback for relative movement request ""
+  long motornumber = (long)args[0].asInt64;
+  int pos = (int)args[1].asDouble;
+
+  goAbsolute(motornumber, pos);
+
+}
+
+void cmd_get_position(MyCommandParser::Argument *args, char *response){
+  // Callback for position request "gp motornumber"
+  long motornumber = (long)args[0].asUInt64;
+  // Get the position from the drivers
+  returnPosition(motornumber);
+}
+
+void cmd_enable_switches(MyCommandParser::Argument *args, char *response){
+  // Callback for position request "gp motornumber"
+  bool state = (bool)args[0].asUInt64;
+  // Get the position from the drivers
+  enableSwitchMonitoring(state);
+}
+
+void serialListener() {
+  if (Serial.available()) {
+    char line[128];
+    size_t lineLength = Serial.readBytesUntil('\n', line, 127);
+    line[lineLength] = '\0';
+
+    char response[MyCommandParser::MAX_RESPONSE_SIZE];
+    parser.processCommand(line, response);
+    // Serial.println(response);
+  }
 }
