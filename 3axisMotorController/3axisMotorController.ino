@@ -152,16 +152,16 @@ void setup()
   analogWriteFrequency(clkPin, CLOCK_FREQUENCY_MHZ*1000000); //Set pin and frequency
   analogWrite(clkPin, 128); //Start signal, 50% duty cycle
 
-  //Motor drivers  
+  //Motor drivers and main controller
   X_driver.setup(Serial1, SERIAL_BAUD_RATE, SERIAL_ADDRESS_0);
   Y_driver.setup(Serial1, SERIAL_BAUD_RATE, SERIAL_ADDRESS_1);
   Z_driver.setup(Serial1, SERIAL_BAUD_RATE, SERIAL_ADDRESS_2);
+  stepper_controller.setup(CHIP_SELECT_PIN, CLOCK_FREQUENCY_MHZ);
   //----------------------------------------------------------------------------
   Wire.begin(); 
   Wire.beginTransmission(0x20);
   Wire.write(0xFF);  //All ON - This is needed to be used with pull-up resistors
   Wire.endTransmission();
-  
   //----------------------------------------------------------------------------
   //PINS
   pinMode(forwardButton, INPUT);
@@ -170,174 +170,61 @@ void setup()
   pinMode(redLEDpin, OUTPUT);
   pinMode(greenLEDpin, OUTPUT);
   pinMode(blueLEDpin, OUTPUT);
-
   //No lights
   analogWrite(redLEDpin, 0);
   analogWrite(greenLEDpin, 0);
   analogWrite(blueLEDpin, 0);
-  
-
   //----------------------------------------------------------------------------
   InitialValues(); //averaging the values of the 3 analog pins (values from potmeters)
   //----------------------------------------------------------------------------
-  
-  //Stepper parameters
-  //setting up some default values for maximum speed and maximum acceleration
-  X_driver.setRunCurrent(RUN_CURRENT_PERCENT);
-  X_driver.enableAutomaticCurrentScaling();
-  X_driver.enableAutomaticGradientAdaptation();
-  X_driver.enableCoolStep();
-  X_driver.setMicrostepsPerStep(MICROSTEPS_PER_STEP);
-  X_driver.enableStealthChop(); //This MUST be enabled for correct motor behaviour
-    
-  stepper_controller.setup(CHIP_SELECT_PIN, CLOCK_FREQUENCY_MHZ);
-
+  //Limit switch setup----------------------------------------------------------
   if (limitSwitchesEnabled == true)
   {
       stepper_controller.enableRightSwitches(); //Enable stop switches on the right side (far end)
   }  
 
   //The limit switch module I use is HIGH by default. When pressed, it goes LOW.
-
-  //A reference switch can be used as an automatic stop switch.
-  //The ref switch indicates the reference position within a given tolerance.
-  //When a reference switch is triggered, the actual position can be stored automatically.
-  //This allows a precise determination of the ref point.
-  //The stepper motor stops if the reference/stop switch becomes active.
-
-  //Right switch when the motor is moving to a more positive direction (CW, away from motor)
-  //Left switch when the motor is moving to a more negative direction (CCW, towards motor)
-
-  /*
-         [LS]       <-||->          [RS]
-    [MOT]-------------==----------------  
-  */
-
-  //disable_stop_l: 0 - the motor will be stopped when the velocity is negative (V_actial < 0) and the LREF becomes active
-  //disable_stop_r: 0 - Stops the motor if the velocity is positive and the RREF switch becomes active
-  //soft_stop: 0 - Stops imediately (hard stop), 1: soft stop - NEED TO TEST
-  //ref_RnL: 0 - Left switch is the reference switch, 1: right switch is the reference.
-
-  //Limit switch: Datasheet page 33.
-  /*
-  setSwitchesActiveHigh()
-  setSwitchesActiveLow() //Choose one depending on the limit switch modules. All 6 modules must be the same!!!
-  */
-
   if (limitSwitchesEnabled == true)
   {
       stepper_controller.setSwitchesActiveLow(); //When switch goes HIGH, it sets an active reference switch signal.
   }
 
-  //Active LOW: Pin status is 3.3V (HIGH) by default and goes LOW when the switch is pressed
-  //Active HIGH: Pin status is GND (LOW) by default and goes HIGH when the switch is pressed
-  //The red limit switches I use for this board are active LOW.  
-  //--------------------------------------------------------------------------------------------------------------
-
-  if (limitSwitchesEnabled == true)
+  //All drivers setup------------------------------------------------------------
+  //Stepper parameters
+  //setting up some default values for maximum speed and maximum acceleration
+  TMC2209 driver_list[] = {X_driver, Y_driver, Z_driver};
+  for (int i = 0; i < 3; i++) 
   {
-      stepper_controller.enableLeftSwitchStop(0); //X (0) Motor stops when the speed is negative and REF1 is active
-      stepper_controller.enableRightSwitchStop(0); //X (0) Motor stops when the speed is positive and REFR1 is active
+  setupDriver(driver_list[i], RUN_CURRENT_PERCENT, MICROSTEPS_PER_STEP);
+  enableSwitchesPerMotor(i, limitSwitchesEnabled);
 
-      //stepper_controller.enableSwitchSoftStop(0); //X (0) Motor stops softly when hitting the switch - Pick one
-      stepper_controller.disableSwitchSoftStop(0); //X (0) Motor stops hard when hitting the switch
-      stepper_controller.setReferenceSwitchToLeft(0); //Homing switch is at the left (negative, motor) side  
+  stepper_controller.setLimitsInHz(i, VELOCITY_MIN, VELOCITY_MAX, ACCELERATION_MAX);
+  stepper_controller.setVelocityMode(i);//Before overwriting X_ACTUAL choose velocity_mode or hold_mode.
+  stepper_controller.setTargetVelocity(i, 0); //...the parameter V_MAX should be set to zero...
+  stepper_controller.setActualPosition(i, ZERO_POSITION);
+  stepper_controller.setTargetPosition(i, ZERO_POSITION);
+  stepper_controller.setSoftMode(i); // Ramp with soft stop - X
+
+  delay(250);
+  driver_list[i].enable();
+  driver_list[i].moveUsingStepDirInterface();
+  delay(250);
   }
-  
-
-  //ALL 3 axes' reference (limit) switches have to be handled!
-  stepper_controller.setLimitsInHz(0, VELOCITY_MIN, VELOCITY_MAX, ACCELERATION_MAX);
-  stepper_controller.setVelocityMode(0);//Before overwriting X_ACTUAL choose velocity_mode or hold_mode.
-  stepper_controller.setTargetVelocity(0, 0); //...the parameter V_MAX should be set to zero...
-  stepper_controller.setActualPosition(0, ZERO_POSITION);
-  stepper_controller.setTargetPosition(0, ZERO_POSITION);
-  stepper_controller.setSoftMode(0); // Ramp with soft stop - X
-  delay(500);
-
-  //----------------------------------------------------------------------------
-  Y_driver.setRunCurrent(RUN_CURRENT_PERCENT);
-  Y_driver.enableAutomaticCurrentScaling();
-  Y_driver.enableAutomaticGradientAdaptation();
-  Y_driver.enableCoolStep();
-  Y_driver.setMicrostepsPerStep(MICROSTEPS_PER_STEP);
-  Y_driver.enableStealthChop(); //This MUST be enabled for correct motor behaviour
-
-  if (limitSwitchesEnabled == true)
-  {
-      stepper_controller.enableLeftSwitchStop(1); //Y (1) Motor stops when the speed is negative and REF1 is active
-      stepper_controller.enableRightSwitchStop(1); //Y (1) Motor stops when the speed is positive and REFR1 is active
-
-      //stepper_controller.enableSwitchSoftStop(1); //Y (1) Motor stops softly when hitting the switch - Pick one
-      stepper_controller.disableSwitchSoftStop(1); //Y (1) Motor stops hard when hitting the switch
-
-      stepper_controller.setReferenceSwitchToLeft(1); //Homing switch is at the left (negative, motor) side
-  }
-  
-
-  stepper_controller.setLimitsInHz(1, VELOCITY_MIN, VELOCITY_MAX, ACCELERATION_MAX);
-  stepper_controller.setVelocityMode(1);//Before overwriting X_ACTUAL choose velocity_mode or hold_mode.
-  stepper_controller.setTargetVelocity(1, 0); //...the parameter V_MAX should be set to zero...
-  stepper_controller.setActualPosition(1, ZERO_POSITION);
-  stepper_controller.setTargetPosition(1, ZERO_POSITION);
-  stepper_controller.setSoftMode(1); // Ramp with soft stop - Y
-  delay(500);
-  //----------------------------------------------------------------------------
-  Z_driver.setRunCurrent(RUN_CURRENT_PERCENT);
-  Z_driver.enableAutomaticCurrentScaling();
-  Z_driver.enableAutomaticGradientAdaptation();
-  Z_driver.enableCoolStep();
-  Z_driver.setMicrostepsPerStep(MICROSTEPS_PER_STEP);
-  Z_driver.enableStealthChop(); //This MUST be enabled for correct motor behaviour
-
-  if (limitSwitchesEnabled == true)
-  {      
-      stepper_controller.enableLeftSwitchStop(2); //Z (2) Motor stops when the speed is negative and REF1 is active
-      stepper_controller.enableRightSwitchStop(2); //Z (2) Motor stops when the speed is positive and REFR1 is active
-
-      //stepper_controller.enableSwitchSoftStop(2); //Z (2) Motor stops softly when hitting the switch - Pick one
-      stepper_controller.disableSwitchSoftStop(2); //Z (2) Motor stops hard when hitting the switch
-
-      stepper_controller.setReferenceSwitchToLeft(2); //Homing switch is at the left (negative, motor) side      
-  }
-
-  stepper_controller.setLimitsInHz(2, VELOCITY_MIN, VELOCITY_MAX, ACCELERATION_MAX);
-  stepper_controller.setVelocityMode(2);//Before overwriting X_ACTUAL choose velocity_mode or hold_mode.
-  stepper_controller.setTargetVelocity(2, 0); //...the parameter V_MAX should be set to zero...
-  stepper_controller.setActualPosition(2, ZERO_POSITION);
-  stepper_controller.setTargetPosition(2, ZERO_POSITION);
-  stepper_controller.setSoftMode(2); // Ramp with soft stop - X
-
-  delay(500);
-
-  //Enable all drivers
-  X_driver.enable();
-  Y_driver.enable();
-  Z_driver.enable();
-
-  //Enable step-dir interface
-  X_driver.moveUsingStepDirInterface();
-  Y_driver.moveUsingStepDirInterface();
-  Z_driver.moveUsingStepDirInterface();
-
 
   //---DEMO. This entire part can be removed, it just wiggles the 3 axes to indicate that the device is turned on
   //Drive the drivers directly via UART - It wiggles all three axes a bit just to see that they work
-  X_driver.moveAtVelocity(-2000); //Drive in the negative direction
-  Y_driver.moveAtVelocity(-2000);
-  Z_driver.moveAtVelocity(-2000);
-
-  delay(1000);
-
-  X_driver.moveAtVelocity(2000); //Drive in the positive direction
-  Y_driver.moveAtVelocity(2000);
-  Z_driver.moveAtVelocity(2000);
-
-  delay(1000);
-  X_driver.moveAtVelocity(0); //Stop
-  Y_driver.moveAtVelocity(0);
-  Z_driver.moveAtVelocity(0);
+    //   X_driver.moveAtVelocity(-2000); //Drive in the negative direction
+    //   Y_driver.moveAtVelocity(-2000);
+    //   Z_driver.moveAtVelocity(-2000);
+    //   delay(1000);
+    //   X_driver.moveAtVelocity(2000); //Drive in the positive direction
+    //   Y_driver.moveAtVelocity(2000);
+    //   Z_driver.moveAtVelocity(2000);
+    //   delay(1000);
+    //   X_driver.moveAtVelocity(0); //Stop
+    //   Y_driver.moveAtVelocity(0);
+    //   Z_driver.moveAtVelocity(0);
   //---ENDOFDEMO
-
 
 }
 
@@ -358,7 +245,17 @@ void loop()
   updateStatusLED();
 }
 
-void checkMotorMovement()
+void setupDriver(TMC2209 driver, int current_precent, int microsteps)
+{
+  driver.setRunCurrent(current_precent);
+  driver.enableAutomaticCurrentScaling();
+  driver.enableAutomaticGradientAdaptation();
+  driver.enableCoolStep();
+  driver.setMicrostepsPerStep(microsteps);
+  driver.enableStealthChop(); //This MUST be enabled for correct motor behaviour
+}
+
+void checkMotorMovement() // for the LEDs
 {
     for (int i = 0; i < 3; i++)
     {
@@ -654,7 +551,7 @@ void returnPosition(int motorNumber)
 
 // STEP UNIT MOVEMENTS ------------------------------------------------------------------------------------------------------------------------------------------------
 // RELATIVE -------------------------------------------------------------------------
-void goRelative(int motorNumber, long Steps) //Moves the stage by xSteps STEP along the X axis relative to the current position
+void goRelative(int motorNumber, long Steps) //Moves the stage by Steps STEP along the X axis relative to the current position
 {
   long targetSteps = 0;
   //Get the current position of the X motor in STEPS
@@ -671,7 +568,7 @@ void goRelative(int motorNumber, long Steps) //Moves the stage by xSteps STEP al
   // long current_position = stepper_controller.getActualPosition(motorNumber);
 }
 // ABSOLUTE -------------------------------------------------------------------------
-void goAbsolute(int motorNumber, long Steps) //Moves the stage by xSteps STEP along the X axis relative to the current position
+void goAbsolute(int motorNumber, long Steps) //Moves the stage by Steps STEP along the X axis relative to the current position
 {
   //send the command to the TMC429
   stepper_controller.setTargetPosition(motorNumber, Steps); //Move X (0) to the recently determined target
@@ -681,9 +578,37 @@ void goAbsolute(int motorNumber, long Steps) //Moves the stage by xSteps STEP al
   // long current_position = stepper_controller.getActualPosition(motorNumber);
 }
 
+void go2dAbsolute(int motorNumber1, int motorNumber2, long Position1, long Position2, long speed) //Brings the stage to a predetermined x and y simultaneously position in mm
+{
+    long start_position1 = stepper_controller.getActualPosition(motorNumber1);
+    long start_position2 = stepper_controller.getActualPosition(motorNumber2);
+
+    long delta1 = Position1 - start_position1;
+    long delta2 = Position2 - start_position2;
+
+    // Calculate speeds for the different directions
+    float angle = atan2f((float)delta2, (float)delta1);
+    float v = (float)speed;
+    long speed1 = (long)v*cosf(angle);
+    long speed2 = (long)v*sinf(angle);
+    Serial.print("Speed 1:"); Serial.println(speed1);
+    Serial.print("Speed 2:"); Serial.println(speed2);
+
+    stepper_controller.setTargetVelocity(motorNumber1,speed1);
+    stepper_controller.setTargetVelocity(motorNumber2,speed2);
+
+    goToAbsolute(motorNumber1, Position1);
+    delayMicroseconds(5); //a brief delay, but probably, it is unnecessary
+    goToAbsolute(motorNumber2, Position2);
+
+    while (stepper_controller.getActualVelocity(motorNumber1) != 0 || stepper_controller.getActualVelocity(motorNumber2) != 0){}
+    Serial.print("New position 1:"); Serial.println(stepper_controller.getActualPosition(motorNumber1));
+    Serial.print("New position 2:"); Serial.println(stepper_controller.getActualPosition(motorNumber2));
+}
+
 // REAL COORDINATE MOVEMENTS
 // RELATIVE -------------------------------------------------------------------------
-void goToRelativeReal(int motorNumber, float Position)
+void goRelativeReal(int motorNumber, float Position)
 {
   long targetSteps = 0;
   // Start position
@@ -697,11 +622,10 @@ void goToRelativeReal(int motorNumber, float Position)
 
 }
 // ABSOLUTE -------------------------------------------------------------------------
-void goToAbsoluteReal(int motorNumber, float Position) //Brings the stage to a predetermined x position in mm
+void goAbsoluteReal(int motorNumber, float Position) //Brings the stage to a predetermined x position in mm
 {
     //Target position in steps units
     long targetSteps = 0; 
-
     //convert xPosition (mm) to steps
     targetSteps = (long)((Position / threadPitches[motorNumber]) * (MICROSTEPS_PER_REV)); //Example where target is 5 mm: ( 5 / 2 ) * (256 * 200) = 2.5 * 51200 steps. OK!
     //send the command to the TMC429
@@ -711,7 +635,7 @@ void goToAbsoluteReal(int motorNumber, float Position) //Brings the stage to a p
 }
 
 // DO WE NEED THIS? - do it from Python ???? if we implement the waitings in the single axis movements then it is useful
-void goToXYReal(int motorNumber1, int motorNumber2, float Position1, float Position2) //Brings the stage to a predetermined x and y simultaneously position in mm
+void go2dAbsoluteReal(int motorNumber1, int motorNumber2, float Position1, float Position2) //Brings the stage to a predetermined x and y simultaneously position in mm
 {
     goToAbsoluteReal(motorNumber1, Position1);
     delayMicroseconds(10); //a brief delay, but probably, it is unnecessary
@@ -930,7 +854,6 @@ void enableSwitchesPerMotor(int motorNumber, bool state){
   else if (state == false){
     stepper_controller.disableLeftSwitchStop(motorNumber); //Motor stops when the speed is negative and REF1 is active
     stepper_controller.disableRightSwitchStop(motorNumber); // Motor stops when the speed is positive and REFR1 is active
-    stepper_controller.setReferenceSwitchToLeft(motorNumber); //Homing switch is at the left (negative, motor) side 
   }
 }
 
@@ -1026,7 +949,6 @@ void monitorLimitSwitches()
     }
 
 }
-
 
 float calculatePositionMM(long stepperMotorSteps)
 {
@@ -1200,7 +1122,7 @@ void driveMotorWithButtons()
 }
 
 void cmd_go_relative(MyCommandParser::Argument *args, char *response){
-  // Callback for relative movement request ""
+  // Callback for relative movement request "mr motornumber steps"
   long motornumber = (long)args[0].asInt64;
   int numsteps = (int)args[1].asDouble;
 
@@ -1209,7 +1131,7 @@ void cmd_go_relative(MyCommandParser::Argument *args, char *response){
 }
 
 void cmd_go_absolute(MyCommandParser::Argument *args, char *response){
-  // Callback for relative movement request ""
+  // Callback for absolute movement request "ma motornumber position"
   long motornumber = (long)args[0].asInt64;
   int pos = (int)args[1].asDouble;
 
@@ -1225,10 +1147,17 @@ void cmd_get_position(MyCommandParser::Argument *args, char *response){
 }
 
 void cmd_enable_switches(MyCommandParser::Argument *args, char *response){
+  // Callback for position request "es state"
+  bool state = (bool)args[0].asUInt64;
+  // Switch according to the desired state
+  enableSwitchMonitoring(state);
+}
+
+void cmd_get_switch_state(MyCommandParser::Argument *args, char *response){
   // Callback for position request "gp motornumber"
   bool state = (bool)args[0].asUInt64;
   // Get the position from the drivers
-  enableSwitchMonitoring(state);
+//   enableSwitchMonitoring(state);
 }
 
 void serialListener() {
