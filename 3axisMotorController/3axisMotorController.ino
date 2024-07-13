@@ -34,6 +34,8 @@ const TMC2209::SerialAddress SERIAL_ADDRESS_1 = TMC2209::SERIAL_ADDRESS_1; //VCC
 TMC2209 Z_driver; //Z axis driver and its address set via the MS1, MS2 pins
 const TMC2209::SerialAddress SERIAL_ADDRESS_2 = TMC2209::SERIAL_ADDRESS_2; //GND-VCC
 
+TMC2209 driver_list[3] = {X_driver, Y_driver, Z_driver};
+
 // Instantiate stepper controller - TMC 429
 TMC429 stepper_controller;
 
@@ -139,24 +141,23 @@ void setup()
   //SERIAL - USB
   Serial.begin(9600);
   Serial.println("TMC249 - TMC2209 - 3-axis motor driver board");
-
+  //Serial COMANNDs setup
   parser.registerCommand("mr", "ud", &cmd_go_relative); // Relative move in STEPs
-  parser.registerCommand("ma", "ud", &cmd_go_absolute); // Relative move in STEPs
+  parser.registerCommand("ma", "ud", &cmd_go_absolute); // Absolute move in STEPs
   parser.registerCommand("gp", "u", &cmd_get_position); // Get Position
-  parser.registerCommand("es", "u", &cmd_enable_switches); // Get Position
+  parser.registerCommand("es", "u", &cmd_enable_switches); // Enable switches
+  parser.registerCommand("sm", "u", &cmd_set_microsteps); // Set microsteps for the given motor driver
+  parser.registerCommand("m2", "uudd", &cmd_move2d); // Move in 2d
+  parser.registerCommand("mm", "u", &cmd_set_move_mode); // Change move mode
+  
 
-  //SERIAL - TMC2209
+  //SERIAL for TMC2209
   Serial1.begin(SERIAL_BAUD_RATE);
 
   //Start the 32 MHz signal for the TMC429 (don't forget to compile the code with CPU = 528 MHz!)
   analogWriteFrequency(clkPin, CLOCK_FREQUENCY_MHZ*1000000); //Set pin and frequency
   analogWrite(clkPin, 128); //Start signal, 50% duty cycle
 
-  //Motor drivers and main controller
-  X_driver.setup(Serial1, SERIAL_BAUD_RATE, SERIAL_ADDRESS_0);
-  Y_driver.setup(Serial1, SERIAL_BAUD_RATE, SERIAL_ADDRESS_1);
-  Z_driver.setup(Serial1, SERIAL_BAUD_RATE, SERIAL_ADDRESS_2);
-  stepper_controller.setup(CHIP_SELECT_PIN, CLOCK_FREQUENCY_MHZ);
   //----------------------------------------------------------------------------
   Wire.begin(); 
   Wire.beginTransmission(0x20);
@@ -177,12 +178,18 @@ void setup()
   //----------------------------------------------------------------------------
   InitialValues(); //averaging the values of the 3 analog pins (values from potmeters)
   //----------------------------------------------------------------------------
+
+  //Motor drivers and main controller
+  driver_list[0].setup(Serial1, SERIAL_BAUD_RATE, SERIAL_ADDRESS_0);
+  driver_list[1].setup(Serial1, SERIAL_BAUD_RATE, SERIAL_ADDRESS_1);
+  driver_list[2].setup(Serial1, SERIAL_BAUD_RATE, SERIAL_ADDRESS_2);
+  stepper_controller.setup(CHIP_SELECT_PIN, CLOCK_FREQUENCY_MHZ);
+
   //Limit switch setup----------------------------------------------------------
   if (limitSwitchesEnabled == true)
   {
       stepper_controller.enableRightSwitches(); //Enable stop switches on the right side (far end)
   }  
-
   //The limit switch module I use is HIGH by default. When pressed, it goes LOW.
   if (limitSwitchesEnabled == true)
   {
@@ -192,39 +199,28 @@ void setup()
   //All drivers setup------------------------------------------------------------
   //Stepper parameters
   //setting up some default values for maximum speed and maximum acceleration
-  TMC2209 driver_list[] = {X_driver, Y_driver, Z_driver};
   for (int i = 0; i < 3; i++) 
   {
-  setupDriver(driver_list[i], RUN_CURRENT_PERCENT, MICROSTEPS_PER_STEP);
-  enableSwitchesPerMotor(i, limitSwitchesEnabled);
+    // Driver setup
+    setupDriver(i, RUN_CURRENT_PERCENT, MICROSTEPS_PER_STEP);
+    // Limit switch setup
+    if (limitSwitchesEnabled == true)
+    {
+      enableSwitchesPerMotor(i, limitSwitchesEnabled);
+    }
+    // Controller setup
+    stepper_controller.setLimitsInHz(i, VELOCITY_MIN, VELOCITY_MAX, ACCELERATION_MAX);
+    stepper_controller.setVelocityMode(i);//Before overwriting X_ACTUAL choose velocity_mode or hold_mode.
+    stepper_controller.setTargetVelocity(i, 0); //...the parameter V_MAX should be set to zero...
+    stepper_controller.setActualPosition(i, ZERO_POSITION);
+    stepper_controller.setTargetPosition(i, ZERO_POSITION);
+    stepper_controller.setSoftMode(i); // Ramp with soft stop
 
-  stepper_controller.setLimitsInHz(i, VELOCITY_MIN, VELOCITY_MAX, ACCELERATION_MAX);
-  stepper_controller.setVelocityMode(i);//Before overwriting X_ACTUAL choose velocity_mode or hold_mode.
-  stepper_controller.setTargetVelocity(i, 0); //...the parameter V_MAX should be set to zero...
-  stepper_controller.setActualPosition(i, ZERO_POSITION);
-  stepper_controller.setTargetPosition(i, ZERO_POSITION);
-  stepper_controller.setSoftMode(i); // Ramp with soft stop - X
-
-  delay(250);
-  driver_list[i].enable();
-  driver_list[i].moveUsingStepDirInterface();
-  delay(250);
+    delay(500);
+    driver_list[i].enable();
+    driver_list[i].moveUsingStepDirInterface();
+    delay(500);
   }
-
-  //---DEMO. This entire part can be removed, it just wiggles the 3 axes to indicate that the device is turned on
-  //Drive the drivers directly via UART - It wiggles all three axes a bit just to see that they work
-    //   X_driver.moveAtVelocity(-2000); //Drive in the negative direction
-    //   Y_driver.moveAtVelocity(-2000);
-    //   Z_driver.moveAtVelocity(-2000);
-    //   delay(1000);
-    //   X_driver.moveAtVelocity(2000); //Drive in the positive direction
-    //   Y_driver.moveAtVelocity(2000);
-    //   Z_driver.moveAtVelocity(2000);
-    //   delay(1000);
-    //   X_driver.moveAtVelocity(0); //Stop
-    //   Y_driver.moveAtVelocity(0);
-    //   Z_driver.moveAtVelocity(0);
-  //---ENDOFDEMO
 
 }
 
@@ -245,14 +241,20 @@ void loop()
   updateStatusLED();
 }
 
-void setupDriver(TMC2209 driver, int current_precent, int microsteps)
+void setupDriver(int motorNumber, int current_percent, int microsteps)
 {
-  driver.setRunCurrent(current_precent);
-  driver.enableAutomaticCurrentScaling();
-  driver.enableAutomaticGradientAdaptation();
-  driver.enableCoolStep();
-  driver.setMicrostepsPerStep(microsteps);
-  driver.enableStealthChop(); //This MUST be enabled for correct motor behaviour
+  driver_list[motorNumber].setRunCurrent(current_percent);
+  driver_list[motorNumber].enableAutomaticCurrentScaling();
+  driver_list[motorNumber].enableAutomaticGradientAdaptation();
+  driver_list[motorNumber].enableCoolStep();
+  driver_list[motorNumber].setMicrostepsPerStep(microsteps);
+  driver_list[motorNumber].enableStealthChop(); //This MUST be enabled for correct motor behaviour
+
+}
+
+void changeMicroSteps(int motorNumber, int microsteps)
+{
+  driver_list[motorNumber].setMicrostepsPerStep(microsteps);
 }
 
 void checkMotorMovement() // for the LEDs
@@ -543,12 +545,6 @@ void InitialValues()
   }
 }
 
-void returnPosition(int motorNumber)
-{
-  int32_t current_position = stepper_controller.getActualPosition(motorNumber);
-  Serial.print("PO"); Serial.print(motorNumber); Serial.println(current_position);
-}
-
 // STEP UNIT MOVEMENTS ------------------------------------------------------------------------------------------------------------------------------------------------
 // RELATIVE -------------------------------------------------------------------------
 void goRelative(int motorNumber, long Steps) //Moves the stage by Steps STEP along the X axis relative to the current position
@@ -578,32 +574,34 @@ void goAbsolute(int motorNumber, long Steps) //Moves the stage by Steps STEP alo
   // long current_position = stepper_controller.getActualPosition(motorNumber);
 }
 
-void go2dAbsolute(int motorNumber1, int motorNumber2, long Position1, long Position2, long speed) //Brings the stage to a predetermined x and y simultaneously position in mm
+void go2dAbsolute(int motorNumber1, int motorNumber2, long Position1, long Position2) //Brings the stage to a predetermined x and y simultaneously position in mm
 {
-    long start_position1 = stepper_controller.getActualPosition(motorNumber1);
-    long start_position2 = stepper_controller.getActualPosition(motorNumber2);
+    // long start_position1 = stepper_controller.getActualPosition(motorNumber1);
+    // long start_position2 = stepper_controller.getActualPosition(motorNumber2);
 
-    long delta1 = Position1 - start_position1;
-    long delta2 = Position2 - start_position2;
+    // long delta1 = Position1 - start_position1;
+    // long delta2 = Position2 - start_position2;
 
     // Calculate speeds for the different directions
-    float angle = atan2f((float)delta2, (float)delta1);
-    float v = (float)speed;
-    long speed1 = (long)v*cosf(angle);
-    long speed2 = (long)v*sinf(angle);
-    Serial.print("Speed 1:"); Serial.println(speed1);
-    Serial.print("Speed 2:"); Serial.println(speed2);
+    // float angle = atan2f((float)delta2, (float)delta1);
+    // float v = (float)speed;
+    // long speed1 = (long)v*cosf(angle);
+    // long speed2 = (long)v*sinf(angle);
+    // Serial.print("Speed 1:"); Serial.println(speed1);
+    // Serial.print("Speed 2:"); Serial.println(speed2);
 
-    stepper_controller.setTargetVelocity(motorNumber1,speed1);
-    stepper_controller.setTargetVelocity(motorNumber2,speed2);
+    // stepper_controller.setTargetVelocity(motorNumber1,speed1);
+    // stepper_controller.setTargetVelocity(motorNumber2,speed2);
 
-    goToAbsolute(motorNumber1, Position1);
-    delayMicroseconds(5); //a brief delay, but probably, it is unnecessary
-    goToAbsolute(motorNumber2, Position2);
+    goAbsolute(motorNumber1, Position1);
+    delayMicroseconds(10); //a brief delay, but probably, it is unnecessary
+    goAbsolute(motorNumber2, Position2);
 
-    while (stepper_controller.getActualVelocity(motorNumber1) != 0 || stepper_controller.getActualVelocity(motorNumber2) != 0){}
-    Serial.print("New position 1:"); Serial.println(stepper_controller.getActualPosition(motorNumber1));
-    Serial.print("New position 2:"); Serial.println(stepper_controller.getActualPosition(motorNumber2));
+    // while (stepper_controller.getActualVelocity(motorNumber1) != 0 || stepper_controller.getActualVelocity(motorNumber2) != 0){
+    //   delay(10);
+    // }
+    // Serial.print("New position 1:"); Serial.println(stepper_controller.getActualPosition(motorNumber1));
+    // Serial.print("New position 2:"); Serial.println(stepper_controller.getActualPosition(motorNumber2));
 }
 
 // REAL COORDINATE MOVEMENTS
@@ -637,9 +635,9 @@ void goAbsoluteReal(int motorNumber, float Position) //Brings the stage to a pre
 // DO WE NEED THIS? - do it from Python ???? if we implement the waitings in the single axis movements then it is useful
 void go2dAbsoluteReal(int motorNumber1, int motorNumber2, float Position1, float Position2) //Brings the stage to a predetermined x and y simultaneously position in mm
 {
-    goToAbsoluteReal(motorNumber1, Position1);
+    goAbsoluteReal(motorNumber1, Position1);
     delayMicroseconds(10); //a brief delay, but probably, it is unnecessary
-    goToAbsoluteReal(motorNumber2, Position2);
+    goAbsoluteReal(motorNumber2, Position2);
     //Simple coding - According to Section 9.4, if the commands arrive fast enough, the motors will move simultaneously
     //It works properly
 
@@ -834,7 +832,8 @@ void motorHoming(int motorNumber) //Motor numbers: x = 0, y = 1, z = 2.
 
 void enableSwitchMonitoring(bool state)
 {
-  for (motorNumber = 0; motorNumber < 3; motorNumber++)
+  stepper_controller.enableRightSwitches();
+  for (int motorNumber = 0; motorNumber < 3; motorNumber++)
   {
     enableSwitchesPerMotor(motorNumber, true);
   }
@@ -872,8 +871,8 @@ void monitorLimitSwitches()
         {
             R_limitSwitchStatus = stepper_controller.rightSwitchActive(motorNumber);
             L_limitSwitchStatus = stepper_controller.leftSwitchActive(motorNumber);
-            //Serial.print(String(motorNumber) + " ");
-            //Serial.println(limitSwitchStatus);
+            // Serial.print(String(motorNumber) + " ");
+            // Serial.print(R_limitSwitchStatus); Serial.println(L_limitSwitchStatus);
 
             if (R_limitSwitchStatus == true)
             {
@@ -908,6 +907,9 @@ void monitorLimitSwitches()
                 stepper_controller.setSoftMode(motorNumber); //Set the motor back to soft mode (position mode)
 
                 break; //Exit the for loop so the loop can inspect the other switches as well
+            }
+            else {
+              limitSwitchActive = false;
             }
 
             if (L_limitSwitchStatus == true)
@@ -944,6 +946,9 @@ void monitorLimitSwitches()
                 stepper_controller.setSoftMode(motorNumber); //Set the motor back to soft mode (position mode)
 
                 break; //Exit the for loop so the loop can inspect the other switches as well
+            }
+            else {
+              limitSwitchActive = false;
             }
         }
     }
@@ -1141,9 +1146,10 @@ void cmd_go_absolute(MyCommandParser::Argument *args, char *response){
 
 void cmd_get_position(MyCommandParser::Argument *args, char *response){
   // Callback for position request "gp motornumber"
-  long motornumber = (long)args[0].asUInt64;
+  long motorNumber = (long)args[0].asUInt64;
   // Get the position from the drivers
-  returnPosition(motornumber);
+  int current_position = stepper_controller.getActualPosition(motorNumber);
+  Serial.print("PO"); Serial.print(motorNumber); Serial.println(current_position);
 }
 
 void cmd_enable_switches(MyCommandParser::Argument *args, char *response){
@@ -1154,12 +1160,53 @@ void cmd_enable_switches(MyCommandParser::Argument *args, char *response){
 }
 
 void cmd_get_switch_state(MyCommandParser::Argument *args, char *response){
-  // Callback for position request "gp motornumber"
+  // Callback for position request "ss motornumber"
   bool state = (bool)args[0].asUInt64;
-  // Get the position from the drivers
-//   enableSwitchMonitoring(state);
+  Serial.print("SS"); Serial.println(state);
 }
 
+void cmd_set_microsteps(MyCommandParser::Argument *args, char *response){
+  // Callback for position request "ss motornumber"
+  int microsteps = (int)args[0].asUInt64;
+  changeMicroSteps(0, microsteps);
+  Serial.print("MS"); Serial.println(driver_list[0].getMicrostepsPerStep());
+}
+
+void cmd_move2d(MyCommandParser::Argument *args, char *response){
+  // Callback for position request "mp motornumber1 motornumber2 pos1 pos2"
+  int motorNumber1 = (int)args[0].asUInt64;
+  int motorNumber2 = (int)args[1].asUInt64;
+
+  long pos1 = (long)args[2].asDouble;
+  long pos2 = (long)args[3].asDouble;
+
+  go2dAbsolute(motorNumber1, motorNumber2, pos1, pos2);
+  Serial.print("PO"); Serial.print(motorNumber1); Serial.print(stepper_controller.getActualPosition(motorNumber1)); Serial.print(motorNumber2); Serial.println(stepper_controller.getActualPosition(motorNumber2));
+}
+
+void cmd_set_move_mode(MyCommandParser::Argument *args, char *response){
+  int mode = (int)args[0].asUInt64;
+
+  for (int motornum = 0; motornum < 3; motornum++) 
+  {
+    switch (mode){
+      case 0:
+        stepper_controller.setSoftMode(motornum); // exponential acceleration at start and finish
+        break;
+      case 1:
+        stepper_controller.setRampMode(motornum); // linear acceleration (speed change)
+        break;
+      case 2:
+        stepper_controller.setVelocityMode(motornum); // constant target velocity is maintained
+        break;
+      case 3:
+        stepper_controller.setHoldMode(motornum); // brutally goes wherever you want it - HULK MODE
+        break;
+    }
+  }
+
+  Serial.print("MO"); Serial.println(mode);
+}
 void serialListener() {
   if (Serial.available()) {
     char line[128];
