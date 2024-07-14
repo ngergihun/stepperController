@@ -147,8 +147,9 @@ void setup()
   parser.registerCommand("gp", "u", &cmd_get_position); // Get Position
   parser.registerCommand("es", "u", &cmd_enable_switches); // Enable switches
   parser.registerCommand("sm", "u", &cmd_set_microsteps); // Set microsteps for the given motor driver
-  parser.registerCommand("m2", "uudd", &cmd_move2d); // Move in 2d
+  parser.registerCommand("mp", "uudd", &cmd_move2d); // Move in 2d - move in plane
   parser.registerCommand("mm", "u", &cmd_set_move_mode); // Change move mode
+  parser.registerCommand("sv","uu", &cmd_set_velocity);
   
 
   //SERIAL for TMC2209
@@ -1207,6 +1208,12 @@ void cmd_set_move_mode(MyCommandParser::Argument *args, char *response){
 
   Serial.print("MO"); Serial.println(mode);
 }
+
+void cmd_set_velocity(MyCommandParser::Argument *args, char *response){
+    int motorNumber = (int)args[0].asUInt64;
+    int velo = (int)args[1].asUInt64;
+}
+
 void serialListener() {
   if (Serial.available()) {
     char line[128];
