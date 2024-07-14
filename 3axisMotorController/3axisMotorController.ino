@@ -1212,6 +1212,8 @@ void cmd_set_move_mode(MyCommandParser::Argument *args, char *response){
 void cmd_set_velocity(MyCommandParser::Argument *args, char *response){
     int motorNumber = (int)args[0].asUInt64;
     int velo = (int)args[1].asUInt64;
+
+    Serial.print("SP"); Serial.print(motorNumber); Serial.println(velo);
 }
 
 void serialListener() {
