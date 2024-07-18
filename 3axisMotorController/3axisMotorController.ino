@@ -159,7 +159,7 @@ void setup()
   parser.registerCommand("mm", "u", &cmd_set_move_mode); // Change move mode
   parser.registerCommand("sv","uu", &cmd_set_maxvelocity); // Sets the maximum velocity microsteps/revolution
   parser.registerCommand("sa","uu", &cmd_set_maxacceleration); // Sets the maximum accelaration that the rampgenerator will use to calculate velocity profile
-  parser.registerCommand("st","dd", &cmd_set_targetvelocity); // Sets the targetvelocity for velocitymode
+  parser.registerCommand("tv","dd", &cmd_set_targetvelocity); // Sets the targetvelocity for velocitymode
 
   //SERIAL for TMC2209
   Serial1.begin(SERIAL_BAUD_RATE);
@@ -288,7 +288,6 @@ void checkMotorMovement() // for the LEDs
 void updateStatusLED()
 {
     //This function follows the status flags and triggers the correspoding LED
-
     //Abort button is pressed - Blinking Red
     if (abortMovement == true)
     {
@@ -877,10 +876,10 @@ void monitorLimitSwitches()
         //Notice! All switches must be connected for proper behaviour!
         bool R_limitSwitchStatus = false; //Right limit switch, away from motor/home (positive direction)
         bool L_limitSwitchStatus = false; //Left limit switch, towards motor/home (negative direction)
-        int motorNumber = 0;
+        // int motorNumber = 0;
 
         //Loop for R
-        for (motorNumber = 0; motorNumber < 3; motorNumber++)
+        for (int motorNumber = 0; motorNumber < 3; motorNumber++)
         {
             R_limitSwitchStatus = stepper_controller.rightSwitchActive(motorNumber);
             L_limitSwitchStatus = stepper_controller.leftSwitchActive(motorNumber);
@@ -921,12 +920,7 @@ void monitorLimitSwitches()
 
                 break; //Exit the for loop so the loop can inspect the other switches as well
             }
-            else {
-              limitSwitchActive = false;
-              limitSwitchWasHit = false;
-            }
-
-            if (L_limitSwitchStatus == true)
+            else if (L_limitSwitchStatus == true)
             {
                 //If any of the switches were activated, we stop 
                 //Assumption: no simultaneous motor motion!
@@ -962,8 +956,8 @@ void monitorLimitSwitches()
                 break; //Exit the for loop so the loop can inspect the other switches as well
             }
             else {
-              limitSwitchActive = false;
-              limitSwitchWasHit = false;
+            //   limitSwitchActive = false;
+            //   limitSwitchWasHit = false;
             }
         }
     }
