@@ -154,6 +154,7 @@ void setup()
   parser.registerCommand("ma", "ud", &cmd_go_absolute); // Absolute move in STEPs
   parser.registerCommand("gp", "u", &cmd_get_position); // Get Position
   parser.registerCommand("es", "u", &cmd_enable_switches); // Enable switches
+  parser.registerCommand("gs", "u", &cmd_get_switch_state); // Get the switch states per motor
   parser.registerCommand("sm", "uu", &cmd_set_microsteps); // Set microsteps for the given motor driver
   parser.registerCommand("mp", "uudd", &cmd_move2d); // Move in 2d - move in plane
   parser.registerCommand("mm", "u", &cmd_set_move_mode); // Change move mode
@@ -856,6 +857,8 @@ void enableSwitchMonitoring(bool state)
 
 void enableSwitchesPerMotor(int motorNumber, bool state){
   if (state == true){
+    stepper_controller.enableRightSwitches(); //Enable stop switches on the right side (far end)
+    //The limit switch module I use is HIGH by default. When pressed, it goes LOW.
     stepper_controller.enableLeftSwitchStop(motorNumber); //Motor stops when the speed is negative and REF1 is active
     stepper_controller.enableRightSwitchStop(motorNumber); // Motor stops when the speed is positive and REFR1 is active
     stepper_controller.setReferenceSwitchToLeft(motorNumber); //Homing switch is at the left (negative, motor) side 
@@ -863,6 +866,7 @@ void enableSwitchesPerMotor(int motorNumber, bool state){
     stepper_controller.disableSwitchSoftStop(motorNumber); // Motor stops hard when hitting the switch
   }
   else if (state == false){
+    stepper_controller.disableRightSwitches();
     stepper_controller.disableLeftSwitchStop(motorNumber); //Motor stops when the speed is negative and REF1 is active
     stepper_controller.disableRightSwitchStop(motorNumber); // Motor stops when the speed is positive and REFR1 is active
   }
@@ -920,7 +924,8 @@ void monitorLimitSwitches()
 
                 break; //Exit the for loop so the loop can inspect the other switches as well
             }
-            else if (L_limitSwitchStatus == true)
+
+            if (L_limitSwitchStatus == true)
             {
                 //If any of the switches were activated, we stop 
                 //Assumption: no simultaneous motor motion!
@@ -955,10 +960,10 @@ void monitorLimitSwitches()
 
                 break; //Exit the for loop so the loop can inspect the other switches as well
             }
-            else {
-            //   limitSwitchActive = false;
-            //   limitSwitchWasHit = false;
-            }
+            // else {
+            // //   limitSwitchActive = false;
+            // //   limitSwitchWasHit = false;
+            // }
         }
     }
 
@@ -1165,13 +1170,17 @@ void cmd_enable_switches(MyCommandParser::Argument *args, char *response){
   // Callback for position request "es state"
   bool state = (bool)args[0].asUInt64;
   // Switch according to the desired state
+  stepper_controller.setSwitchesActiveHigh(); //When switch goes HIGH, it sets an active reference switch signal.
   enableSwitchMonitoring(state);
 }
 
 void cmd_get_switch_state(MyCommandParser::Argument *args, char *response){
   // Callback for position request "ss motornumber"
-  bool state = (bool)args[0].asUInt64;
-  Serial.print("SS"); Serial.println(state);
+  bool motorNumber = (bool)args[0].asUInt64;
+
+  bool Rswitch = stepper_controller.rightSwitchActive(motorNumber);
+  bool Lswitch = stepper_controller.leftSwitchActive(motorNumber);
+  Serial.print("SS"); Serial.print(motorNumber); Serial.print(Lswitch); Serial.println(Rswitch);
 }
 
 void cmd_set_microsteps(MyCommandParser::Argument *args, char *response){
