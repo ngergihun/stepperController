@@ -30,4 +30,7 @@ The repository uses separate licenses for its different types of work:
 | Firmware and Python communication layer | MIT License | [`LICENSE-MIT.txt`](LICENSE-MIT.txt) |
 | User documentation and explanatory text | Creative Commons Attribution 4.0 International (`CC BY 4.0`) | [`LICENSE-CC-BY-4.0.txt`](LICENSE-CC-BY-4.0.txt) |
 
-Please preserve the project attribution to the SMIS beamline of synchrotron SOLEIL and DM Devices when redistributing or modifying the project. These licensing notices apply only to material for which the project contributors have the necessary rights to grant the stated license.
+Please preserve the project attribution to the [SMIS beamline][smis_website] of synchrotron SOLEIL and [DM Devices][dm_website] when redistributing or modifying the project. These licensing notices apply only to material for which the project contributors have the necessary rights to grant the stated license.
+
+[dm_website]: https://curiousscientist.tech/
+[smis-website]: https://www.synchrotron-soleil.fr/en/beamlines/smis
