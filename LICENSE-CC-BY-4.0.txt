@@ -1,0 +1,14 @@
+Creative Commons Attribution 4.0 International
+
+SPDX-License-Identifier: CC-BY-4.0
+
+The documentation and explanatory text in this repository are licensed under
+the Creative Commons Attribution 4.0 International License (CC BY 4.0).
+
+To view a copy of this license, visit:
+https://creativecommons.org/licenses/by/4.0/
+
+The complete legal code is available at:
+https://creativecommons.org/licenses/by/4.0/legalcode
+
+Copyright (c) 2024 SMIS beamline of synchrotron SOLEIL and DM Devices.

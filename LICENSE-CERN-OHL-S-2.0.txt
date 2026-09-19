@@ -1,0 +1,15 @@
+CERN Open Hardware Licence Version 2 - Strongly Reciprocal
+
+SPDX-License-Identifier: CERN-OHL-S-2.0
+
+The hardware designs, schematics, and related hardware files in this
+repository are licensed under the CERN Open Hardware Licence Version 2 -
+Strongly Reciprocal (CERN-OHL-S-2.0).
+
+The complete license text is maintained by CERN at:
+https://ohwr.org/cern_ohl_s_v2.txt
+
+A convenient copy of the license is also available at:
+https://spdx.org/licenses/CERN-OHL-S-2.0.html
+
+Copyright (c) 2024 SMIS beamline of synchrotron SOLEIL and DM Devices.
